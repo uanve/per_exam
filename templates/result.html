@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Resultado · {{ exam.title }}{% endblock %}
+{% block content %}
+<section class="result-banner {{ 'passed' if result.passed else 'failed' }}" data-clear-storage="rumbo-{{ exam.id }}-{{ mode }}">
+  <p class="eyebrow">RESULTADO · {{ modes[mode].label }}</p>
+  <h1>{{ '¡Has aprobado!' if result.passed else 'Todavía no has aprobado' }}</h1>
+  <p class="score">{{ result.score }} <span>/ {{ result.total }} aciertos</span></p>
+  <p>{{ result.total - result.score }} errores, incluidos {{ result.blank }} en blanco · Mínimo necesario: {{ modes[mode].minimum }} aciertos.</p>
+  {% if result.failures %}<ul>{% for failure in result.failures %}<li>{{ failure }}</li>{% endfor %}</ul>{% else %}<p>Cumples el mínimo de aciertos y todos los límites por materia.</p>{% endif %}
+  <div class="actions">
+    <a class="button" href="{{ url_for('exam_page', exam_id=exam.id, mode=mode) }}">Volver a practicar</a>
+    <a class="button secondary" href="{{ url_for('index', mode=mode) }}">Otros exámenes</a>
+  </div>
+</section>
+<section class="panel">
+  <h2>Resultados por materia</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Materia</th><th>Aciertos</th><th>Errores</th><th>Máximo de errores</th></tr></thead>
+      <tbody>{% for unit in result.units %}
+        <tr {% if unit.limit is not none and unit.errors > unit.limit %}class="limit-exceeded"{% endif %}>
+          <th scope="row">{{ unit.name }}</th><td>{{ unit.correct }} / {{ unit.total }}</td><td>{{ unit.errors }}</td><td>{{ unit.limit if unit.limit is not none else '—' }}{% if unit.limit is not none and unit.errors > unit.limit %} · Superado{% endif %}</td>
+        </tr>
+      {% endfor %}</tbody>
+    </table>
+  </div>
+</section>
+<section class="review">
+  <h2>Revisión de respuestas</h2>
+  {% for question in result.questions %}
+  <article class="question-card review-card {{ 'correct' if question.is_correct else 'incorrect' }}">
+    <div class="review-heading"><h3>Pregunta {{ question.number }}</h3><span>{{ 'Correcta' if question.is_correct else 'En blanco' if not question.answer else 'Incorrecta' }}</span></div>
+    {% include "_question.html" %}
+    <div class="options">
+      {% for letter, text in question.options.items() %}
+      <div class="option review-option {% if letter == question.correct %}right-answer{% elif letter == question.answer %}wrong-answer{% endif %}">
+        <span class="letter">{{ letter|upper }}</span>
+        <span>{{ text }}{% if letter == question.correct %}<strong class="answer-note">Respuesta correcta</strong>{% endif %}{% if letter == question.answer %}<strong class="answer-note">Tu respuesta</strong>{% endif %}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </article>
+  {% endfor %}
+</section>
+{% endblock %}

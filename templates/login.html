@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Administración · Rumbo PER{% endblock %}
+{% block content %}
+<section class="login-panel panel">
+  <p class="eyebrow">ZONA DE ADMINISTRACIÓN</p>
+  <h1>Gestiona tus exámenes</h1>
+  <p>Importa PDFs y publica las preguntas en el catálogo digital.</p>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Contraseña de administración<input type="password" name="password" required autocomplete="current-password"></label>
+    <button class="button full" type="submit">Entrar</button>
+  </form>
+</section>
+{% endblock %}

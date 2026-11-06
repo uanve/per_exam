@@ -1,0 +1,5 @@
+<div class="question-text">{{ question.text }}</div>
+{% for position in range(question.image_count) %}
+<img class="question-image" src="{{ url_for('image', exam_id=exam.id, number=question.number, position=position) }}"
+     alt="Ilustración {{ position + 1 }} de la pregunta {{ question.number }}" loading="lazy">
+{% endfor %}

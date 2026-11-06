@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-heading">
+  <a class="back-link" href="{{ url_for('admin') }}">← Administración</a>
+  <p class="eyebrow">{{ 'EXAMEN PUBLICADO' if exam.published else 'REVISIÓN DEL BORRADOR' }}</p>
+  <h1>{{ exam.title }}</h1>
+  <p>Fecha: {{ exam.exam_date }} · {{ questions|length }} preguntas importadas. Comprueba los textos, las imágenes y cada solución con el original.</p>
+  {% if not exam.published %}
+  <div class="actions">
+    <form method="post" action="{{ url_for('publish', exam_id=exam.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="button">He revisado el examen: publicar</button>
+    </form>
+    <form method="post" action="{{ url_for('discard', exam_id=exam.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="button secondary">Descartar borrador</button>
+    </form>
+  </div>
+  {% endif %}
+</div>
+{% for question in questions %}
+<article class="question-card">
+  <h2>Pregunta {{ question.number }} · UT{{ subject_for(question.number)[0] }}</h2>
+  {% include "_question.html" %}
+  <div class="options">{% for letter, text in question.options.items() %}
+    <div class="option review-option {% if letter == question.correct %}right-answer{% endif %}">
+      <span class="letter">{{ letter|upper }}</span><span>{{ text }}{% if letter == question.correct %}<strong class="answer-note">Solución importada</strong>{% endif %}</span>
+    </div>
+  {% endfor %}</div>
+</article>
+{% endfor %}
+{% endblock %}

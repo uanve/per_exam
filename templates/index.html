@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero">
+  <div>
+    <p class="eyebrow">TU PRÓXIMO RUMBO EMPIEZA AQUÍ</p>
+    <h1>Practica hoy.<br>Navega mañana.</h1>
+    <p class="lead">Exámenes reales, preguntas digitales y una corrección clara. Elige tu modalidad y una convocatoria para empezar.</p>
+  </div>
+  <div class="hero-card">
+    <span class="compass" aria-hidden="true">N<br>╱ │ ╲<br>O ─ ◇ ─ E<br>╲ │ ╱<br>S</span>
+    <p>Un examen. Un paso más cerca del mar.</p>
+  </div>
+</section>
+<form method="get" class="search-panel" id="catalog-search">
+  <fieldset class="mode-picker">
+    <legend>1. ¿Qué estás preparando?</legend>
+    {% for key, rules in modes.items() %}
+    <label class="mode-card">
+      <input type="radio" name="mode" value="{{ key }}" {% if mode == key %}checked{% endif %}>
+      <span><strong>{{ rules.label }}</strong><small>{{ rules.total }} preguntas · Mínimo {{ rules.minimum }} aciertos{% if key == 'extension' %} · UT 7–11{% endif %}</small></span>
+    </label>
+    {% endfor %}
+  </fieldset>
+  <div class="search-fields">
+    <label>Convocatoria por mes<input type="month" name="month" value="{{ month }}"></label>
+    <label>Buscar examen<input type="search" name="q" value="{{ query }}" placeholder="Ej. Julio, modelo 3…"></label>
+    <button class="button" type="submit">Buscar exámenes</button>
+    {% if month or query %}<a class="subtle" href="{{ url_for('index', mode=mode) }}">Limpiar</a>{% endif %}
+  </div>
+</form>
+<section class="catalog">
+  <div class="section-heading"><h2>2. Elige tu examen</h2><span>{{ exams|length }} {{ 'disponible' if exams|length == 1 else 'disponibles' }}</span></div>
+  <div class="exam-grid">
+  {% for exam in exams %}
+    <article class="exam-card">
+      <div class="card-top"><span class="tag">CONVOCATORIA {{ exam.exam_date }}</span><span class="small-muted">CAT / ES</span></div>
+      <h3>{{ exam.title }}</h3>
+      <p>{{ modes[mode].label }}</p>
+      <div class="exam-meta"><span>{{ modes[mode].total }} preguntas</span><span>Tipo test · 4 opciones</span></div>
+      <a class="button full" href="{{ url_for('exam_page', exam_id=exam.id, mode=mode) }}">Empezar examen <span aria-hidden="true">→</span></a>
+    </article>
+  {% else %}
+    <div class="empty"><h3>No hay exámenes para esta búsqueda</h3><p>Prueba otro mes o elimina los filtros.</p></div>
+  {% endfor %}
+  </div>
+</section>
+<aside class="rules-note">
+  <h3>¿Cuándo se aprueba?</h3>
+  <p><strong>PER completo:</strong> al menos 32 de 45. Máximo 2 errores en balizamiento, 5 en RIPA y 2 en carta de navegación.</p>
+  <p><strong>Ampliación desde PNB:</strong> al menos 15 de 18 (UT 7–11), con máximo 2 errores en carta. Las preguntas en blanco cuentan como errores.</p>
+</aside>
+{% endblock %}

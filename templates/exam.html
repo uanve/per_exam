@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}{{ exam.title }} · {{ modes[mode].label }}{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <a class="back-link" href="{{ url_for('index', mode=mode) }}">← Volver a exámenes</a>
+  <p class="eyebrow">{{ modes[mode].label }} · {{ exam.exam_date }}</p>
+  <h1>{{ exam.title }}</h1>
+  <p>{{ questions|length }} preguntas · Una respuesta por pregunta · Puedes corregir aunque dejes preguntas en blanco.</p>
+</div>
+<div class="notice">Para UT11 necesitarás tu carta náutica del Estrecho y material de navegación. El PDF de origen no incluye la carta. {% if mode == 'per' %}La duración oficial máxima es de 90 minutos.{% endif %} Aquí puedes practicar sin límite de tiempo.</div>
+<div class="exam-layout">
+  <aside class="exam-sidebar">
+    <div class="sticky-panel">
+      <p class="eyebrow">TU PROGRESO</p>
+      <p class="progress-label"><strong id="answered-count">0</strong> / {{ questions|length }} respondidas</p>
+      <progress id="exam-progress" max="{{ questions|length }}" value="0">0</progress>
+      <nav class="question-nav" aria-label="Ir a pregunta">
+        {% for question in questions %}<a href="#question-{{ question.number }}" data-nav="{{ question.number }}">{{ question.number }}</a>{% endfor %}
+      </nav>
+      <p class="small-muted">Tus selecciones se guardan en este navegador hasta corregir. No se envían hasta que pulses «Corregir».</p>
+      <a class="button secondary full" href="#finish">Ir a corregir</a>
+    </div>
+  </aside>
+  <form method="post" id="exam-form" data-storage-key="rumbo-{{ exam.id }}-{{ mode }}" class="questions">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% for question in questions %}
+    <fieldset id="question-{{ question.number }}" class="question-card" data-number="{{ question.number }}">
+      <legend><span class="question-number">{{ question.number }}</span> <span>UT{{ subject_for(question.number)[0] }} · {{ subject_for(question.number)[1] }}</span></legend>
+      {% include "_question.html" %}
+      <div class="options">
+        {% for letter, text in question.options.items() %}
+        <label class="option">
+          <input type="radio" name="q{{ question.number }}" value="{{ letter }}">
+          <span class="letter">{{ letter|upper }}</span><span>{{ text }}</span>
+        </label>
+        {% endfor %}
+      </div>
+      <button type="button" class="text-button clear-answer" data-clear="{{ question.number }}" hidden>Dejar en blanco</button>
+    </fieldset>
+    {% endfor %}
+    <section id="finish" class="finish-card">
+      <h2>¿Listo para comprobar tu rumbo?</h2>
+      <p id="finish-summary">Las preguntas en blanco cuentan como errores. Revisaremos también los límites por materia.</p>
+      <button class="button" type="submit">Corregir examen</button>
+    </section>
+  </form>
+</div>
+{% endblock %}

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#102c40">
+  <title>{% block title %}Rumbo PER · Exámenes náuticos{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Saltar al contenido</a>
+  <header class="site-header">
+    <div class="container header-inner">
+      <a class="brand" href="{{ url_for('index') }}"><span class="brand-mark" aria-hidden="true">R</span> RUMBO <strong>PER</strong></a>
+      <nav aria-label="Principal">
+        <a href="{{ url_for('index') }}">Exámenes</a>
+        <a href="{{ url_for('admin') }}">Administración</a>
+        {% if session.get('admin') %}
+        <form action="{{ url_for('logout') }}" method="post" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="text-button" type="submit">Salir</button>
+        </form>
+        {% endif %}
+      </nav>
+    </div>
+  </header>
+  <main id="main" class="container">
+    {% for category, message in get_flashed_messages(with_categories=true) %}
+      <div role="alert" class="notice {{ category }}">{{ message }}</div>
+    {% endfor %}
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="container footer">Rumbo PER · Practica a tu ritmo. La corrección sigue los criterios de la convocatoria indicada.</footer>
+</body>
+</html>

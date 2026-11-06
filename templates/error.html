@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel login-panel">
+  <p class="eyebrow">ERROR {{ code }}</p>
+  <h1>No se ha podido completar la petición</h1>
+  <p role="alert">{{ message }}</p>
+  <a class="button" href="{{ url_for('index') }}">Volver a exámenes</a>
+</section>
+{% endblock %}
