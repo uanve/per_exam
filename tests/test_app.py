@@ -11,7 +11,7 @@ from exams import ImportProblem, grade, parse_pdf, subject_for
 from storage import connect, load_questions
 
 
-CONTENT = (BASE / "PER_JUL26_3.pdf").read_bytes()
+CONTENT = (BASE / "pdfs" / "2026-07__Julio 2026 - Modelo 3.pdf").read_bytes()
 EXPECTED_KEY = "bbccbbccbdbcddcbdddccabadbacadbbbcddcbbacdacc"
 
 
@@ -278,6 +278,83 @@ class WebTests(unittest.TestCase):
         self.app.config["MAX_CONTENT_LENGTH"] = 1024
         response = self.upload(b"%PDF-" + b"x" * 2048, token)
         self.assertEqual(response.status_code, 413)
+
+
+class SeedTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        root = Path(self.temp.name)
+        self.pdfs = root / "pdfs"
+        self.pdfs.mkdir()
+        self.config = {
+            "TESTING": True, "SECRET_KEY": "seed-test-key",
+            "DATA_DIR": root / "data", "SEED_DIR": self.pdfs,
+        }
+
+    def rows(self):
+        with closing(connect(Path(self.config["DATA_DIR"]) / "exams.sqlite3")) as db:
+            return [dict(row) for row in db.execute("SELECT * FROM exams ORDER BY id")]
+
+    def test_seed_on_empty_and_existing_database(self):
+        (self.pdfs / "2026-07__Julio.pdf").write_bytes(CONTENT)
+        first_app = create_app(self.config)
+        self.assertIn(b"Julio", first_app.test_client().get("/").data)
+        self.assertEqual(self.rows()[0]["exam_date"], "2026-07")
+        self.assertEqual(self.rows()[0]["published"], 1)
+        (self.pdfs / "2026-08__Copia.PDF").write_bytes(CONTENT)
+        with pymupdf.open(stream=CONTENT, filetype="pdf") as doc:
+            doc.set_metadata({"title": "New seed"})
+            (self.pdfs / "2026-11-06__Noviembre.PDF").write_bytes(doc.tobytes())
+        create_app(self.config)
+        rows = self.rows()
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[1]["title"], "Noviembre")
+        self.assertEqual(rows[1]["exam_date"], "2026-11-06")
+        create_app(self.config)
+        self.assertEqual(len(self.rows()), 2)
+        (self.pdfs / "2026-07__Julio.pdf").unlink()
+        create_app(self.config)
+        self.assertEqual(len(self.rows()), 2)
+
+    def test_existing_draft_is_not_published_by_seed(self):
+        (self.pdfs / "2026-07__Julio.pdf").write_bytes(CONTENT)
+        create_app(self.config)
+        with closing(connect(Path(self.config["DATA_DIR"]) / "exams.sqlite3")) as db, db:
+            db.execute("UPDATE exams SET published = 0, title = 'Revisar'")
+        create_app(self.config)
+        self.assertEqual(self.rows()[0]["published"], 0)
+        self.assertEqual(self.rows()[0]["title"], "Revisar")
+
+    def test_empty_directory_and_non_pdf_files(self):
+        (self.pdfs / "ignore.txt").write_text("not an exam")
+        create_app(self.config)
+        self.assertEqual(self.rows(), [])
+
+    def test_invalid_names_dates_and_documents_fail_explicitly(self):
+        for filename, content in (
+            ("exam.pdf", CONTENT),
+            ("2026-13__Bad month.pdf", CONTENT),
+            ("2026-02-30__Bad day.pdf", CONTENT),
+            ("2026-07__Broken.pdf", b"not a pdf"),
+        ):
+            with self.subTest(filename=filename):
+                path = self.pdfs / filename
+                path.write_bytes(content)
+                with self.assertLogs("app", level="ERROR") as logs:
+                    with self.assertRaisesRegex(ImportProblem, filename):
+                        create_app(self.config)
+                self.assertIn(filename, logs.output[0])
+                self.assertEqual(self.rows(), [])
+                path.unlink()
+
+    def test_missing_directory_and_oversize(self):
+        with self.assertRaisesRegex(ImportProblem, "No existe"):
+            create_app({**self.config, "SEED_DIR": self.pdfs / "missing"})
+        (self.pdfs / "2026-07__Large.pdf").write_bytes(CONTENT)
+        with self.assertLogs("app", level="ERROR"):
+            with self.assertRaisesRegex(ImportProblem, "límite"):
+                create_app({**self.config, "MAX_CONTENT_LENGTH": 1024})
 
 
 if __name__ == "__main__":

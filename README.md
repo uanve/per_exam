@@ -55,13 +55,43 @@ incrustadas. Se validan orden, cantidad de preguntas, opciones y soluciones.
 Un PDF incompleto, escaneado, cifrado, con otra plantilla de soluciones o
 sin texto extraíble se rechaza con un mensaje; no se adivinan respuestas.
 Otros diseños, figuras vectoriales o cambios de maquetación pueden requerir
-adaptar el importador. La revisión manual previa a publicar es obligatoria.
+adaptar el importador. En administración se exige revisar el borrador antes de publicarlo.
 No se ejecuta OCR ni se envían documentos a servicios externos.
 
-El examen incluido se carga automáticamente una sola vez. Su fecha figura
-como `2026-07` porque la portada solo identifica mes y año; no se inventa el
-día de la convocatoria. Los nuevos exámenes usan la fecha que introduce el
-administrador. Los PDFs duplicados se detectan mediante SHA-256.
+## PDFs iniciales: importar al desplegar
+
+Deja tus PDFs en la carpeta [`pdfs/`](./pdfs) y súbelos al repositorio.
+En cada arranque, también después de un deploy en Railway, la aplicación
+importa y **publica automáticamente** los PDFs nuevos. No necesitas usar el
+panel de administración para estos archivos.
+
+El nombre indica la fecha y el título que aparecerán en el catálogo:
+
+```text
+pdfs/
+  2026-07__Julio 2026 - Modelo 3.pdf
+  2026-11-06__Noviembre 2026 - Modelo 1.pdf
+```
+
+Usa `AAAA-MM__Titulo.pdf` si solo conoces el mes, o
+`AAAA-MM-DD__Titulo.pdf` si conoces el día. Hay **dos guiones bajos**
+entre la fecha y el título. Se admiten `.pdf` y `.PDF`, hasta 15 MB por archivo,
+directamente dentro de la carpeta (no se recorren subcarpetas).
+El PDF de ejemplo ya está colocado ahí con el mes de su portada.
+
+Se aplica la misma validación de preguntas y soluciones que en administración.
+Revisa los PDFs antes de subirlos: este flujo los publica directamente.
+Si el nombre, fecha o contenido no son válidos, el arranque falla con el
+nombre del archivo y el motivo en los logs de Railway; corrígelo y redespliega.
+Los archivos importados correctamente antes del fallo ya quedan guardados.
+
+Los duplicados se detectan por contenido (SHA-256), incluso si cambias el
+nombre. Los siguientes despliegues no duplican ni modifican los exámenes
+existentes y tampoco publican borradores ya existentes. Quitar un PDF del
+repositorio no elimina su examen de la base de datos. No cambies el contenido
+de un PDF para corregir sus metadatos: se trataría como un examen nuevo.
+Las fechas de las importaciones desde administración siguen siendo las
+que introduce el administrador.
 
 ## Railway desde GitHub
 
@@ -102,7 +132,8 @@ JavaScript, salvo el guardado local, el progreso y el botón de dejar en blanco.
 
 Cubren el PDF real, sus 45 soluciones y 9 ilustraciones, umbrales de aprobado,
 límites por materia, blancos, catálogo, administración, publicación,
-persistencia, duplicados y validación de formularios.
+persistencia, duplicados, validación de formularios e importación automática
+de la carpeta inicial en bases de datos nuevas y existentes.
 
 ## Uso del material y dependencias
 

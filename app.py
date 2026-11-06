@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import os
+import re
 import secrets
 import sqlite3
 import time
@@ -35,6 +36,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         SESSION_COOKIE_SECURE=os.environ.get("RAILWAY_ENVIRONMENT_ID") is not None,
         PERMANENT_SESSION_LIFETIME=3600,
         SEED_EXAM=True,
+        SEED_DIR=BASE / "pdfs",
     )
     if test_config:
         app.config.update(test_config)
@@ -59,10 +61,36 @@ def create_app(test_config: dict | None = None) -> Flask:
         db.execute("PRAGMA journal_mode = WAL")
         db.executescript(SCHEMA)
         if app.config["SEED_EXAM"]:
-            content = (BASE / "PER_JUL26_3.pdf").read_bytes()
-            digest = hashlib.sha256(content).hexdigest()
-            if not db.execute("SELECT id FROM exams WHERE digest = ?", (digest,)).fetchone():
-                insert_exam(db, content, parse_pdf(content), "Julio 2026 · Modelo 3", "2026-07", True)
+            seed_dir = Path(app.config["SEED_DIR"])
+            if not seed_dir.is_dir():
+                raise ImportProblem(f"No existe la carpeta de exámenes iniciales: {seed_dir}")
+            for path in sorted(seed_dir.iterdir()):
+                if not path.is_file() or path.suffix.lower() != ".pdf":
+                    continue
+                try:
+                    match = re.fullmatch(r"(\d{4}-\d{2}(?:-\d{2})?)__(.+)", path.stem)
+                    if not match:
+                        raise ImportProblem("Usa el nombre AAAA-MM__Titulo.pdf o AAAA-MM-DD__Titulo.pdf.")
+                    exam_date, title = match.groups()
+                    title = title.strip()
+                    try:
+                        date.fromisoformat(exam_date + "-01" if len(exam_date) == 7 else exam_date)
+                    except ValueError as error:
+                        raise ImportProblem("La fecha del nombre del PDF no es válida.") from error
+                    if not 1 <= len(title) <= 150:
+                        raise ImportProblem("El título debe tener entre 1 y 150 caracteres.")
+                    if path.stat().st_size > app.config["MAX_CONTENT_LENGTH"]:
+                        raise ImportProblem("El PDF supera el límite de 15 MB.")
+                    content = path.read_bytes()
+                    digest = hashlib.sha256(content).hexdigest()
+                    if db.execute("SELECT id FROM exams WHERE digest = ?", (digest,)).fetchone():
+                        continue
+                    insert_exam(db, content, parse_pdf(content), title, exam_date, published=True)
+                    app.logger.info("Examen inicial importado y publicado: %s", path.name)
+                except (ImportProblem, OSError) as error:
+                    message = f"No se pudo importar el examen inicial {path.name}: {error}"
+                    app.logger.error("%s", message)
+                    raise ImportProblem(message) from error
 
     def database() -> sqlite3.Connection:
         if "db" not in g:
