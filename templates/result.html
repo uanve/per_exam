@@ -1,7 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Resultado · {{ exam.title }}{% endblock %}
 {% block content %}
-<section class="result-banner {{ 'passed' if result.passed else 'failed' }}" data-clear-storage="rumbo-{{ exam.id }}-{{ mode }}">
+<section class="result-banner {{ 'passed' if result.passed else 'failed' }}" data-clear-storage="rumbo-{{ exam.id }}-{{ mode }}"
+         data-session-result="{{ history_entry|tojson|forceescape }}">
   <p class="eyebrow">RESULTADO · {{ modes[mode].label }}</p>
   <h1>{{ '¡Has aprobado!' if result.passed else 'Todavía no has aprobado' }}</h1>
   <p class="score">{{ result.score }} <span>/ {{ result.total }} aciertos</span></p>

@@ -6,7 +6,7 @@ import secrets
 import sqlite3
 import time
 from contextlib import closing
-from datetime import date
+from datetime import date, datetime, timezone
 from functools import wraps
 from pathlib import Path
 
@@ -199,6 +199,9 @@ def create_app(test_config: dict | None = None) -> Flask:
         questions = load_questions(database(), exam_id)
         questions = [q for q in questions if q["number"] >= MODES[mode]["first"]]
         if request.method == "POST":
+            attempt_id = request.form.get("attempt_id", "")
+            if attempt_id and not re.fullmatch(r"[a-f0-9]{32}", attempt_id):
+                abort(400, description="Identificador de intento no válido.")
             answers = {}
             for question in questions:
                 name = str(question["number"])
@@ -210,9 +213,20 @@ def create_app(test_config: dict | None = None) -> Flask:
                 result = grade(questions, answers, mode)
             except ValueError as error:
                 abort(400, description=str(error))
-            return render_template("result.html", exam=exam, mode=mode, result=result)
+            history_entry = {
+                "id": attempt_id or secrets.token_hex(16),
+                "examId": exam_id, "title": exam["title"],
+                "mode": mode, "modeLabel": MODES[mode]["label"],
+                "score": result["score"], "total": result["total"],
+                "passed": result["passed"],
+                "completedAt": datetime.now(timezone.utc).isoformat(),
+            }
+            return render_template(
+                "result.html", exam=exam, mode=mode, result=result, history_entry=history_entry,
+            )
         return render_template(
             "exam.html", exam=exam, mode=mode,
+            attempt_id=secrets.token_hex(16),
             questions=[q for q in questions if not q["excluded_reason"]],
             excluded=[q for q in questions if q["excluded_reason"]],
         )

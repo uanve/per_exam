@@ -1,3 +1,6 @@
+import html
+import json
+import re
 import tempfile
 import unittest
 from contextlib import closing
@@ -277,6 +280,42 @@ class WebTests(unittest.TestCase):
         })
         self.assertIn(b"18 <span>/ 18", response.data)
 
+    def test_session_history_payload_and_catalogue_hooks(self):
+        token = self.token()
+        exam_html = self.client.get("/exams/1").data
+        attempt_id = re.search(rb'name="attempt_id" value="([^"]+)"', exam_html)[1].decode()
+        answers = {"q" + str(i): letter for i, letter in enumerate(EXPECTED_KEY, 1)}
+        response = self.client.post("/exams/1", data={
+            **answers, "csrf_token": token, "attempt_id": attempt_id,
+        })
+        payload = re.search(rb'data-session-result="([^"]+)"', response.data)[1]
+        entry = json.loads(html.unescape(payload.decode()))
+        self.assertEqual(entry["examId"], 1)
+        self.assertEqual(entry["mode"], "per")
+        self.assertEqual(entry["score"], 45)
+        self.assertEqual(entry["total"], 45)
+        self.assertEqual(entry["id"], attempt_id)
+        repeated = self.client.post("/exams/1", data={
+            **answers, "csrf_token": token, "attempt_id": attempt_id,
+        })
+        self.assertEqual(
+            json.loads(html.unescape(re.search(rb'data-session-result="([^"]+)"', repeated.data)[1].decode()))["id"],
+            attempt_id,
+        )
+        self.assertIs(entry["passed"], True)
+        self.assertNotIn("answers", entry)
+        self.assertNotIn("questions", entry)
+        response = self.client.post("/exams/1?mode=extension", data={"csrf_token": token})
+        second = json.loads(html.unescape(re.search(rb'data-session-result="([^"]+)"', response.data)[1].decode()))
+        self.assertEqual(second["mode"], "extension")
+        self.assertEqual(second["score"], 0)
+        self.assertIs(second["passed"], False)
+        self.assertNotEqual(second["id"], entry["id"])
+        self.assertIn(b'id="session-history"', self.client.get("/").data)
+        self.assertIn(b'data-history-mode="extension"', self.client.get("/?mode=extension").data)
+        with self.client.session_transaction() as session:
+            self.assertNotIn("history", session)
+
     def test_csrf_auth_invalid_options_and_images(self):
         self.assertEqual(self.client.post("/exams/1").status_code, 400)
         self.assertEqual(self.client.get("/admin").status_code, 302)
@@ -387,6 +426,48 @@ class WebTests(unittest.TestCase):
         self.assertIn(b"Anulada", response.data)
 
 
+    def test_unreadable_key_draft_manual_answers_cancellation_and_restart(self):
+        token = self.login()
+        content = (BASE / "pdfs" / "2025-02__Febrero 2025 - Modelo 1.pdf").read_bytes()
+        response = self.upload(content, token, "Manual solutions")
+        self.assertEqual(response.status_code, 302)
+        preview = response.headers["Location"]
+        exam_id = int(preview.rsplit("/", 1)[1])
+        self.assertIn(b"Pendiente de revisi", self.client.get(preview).data)
+        public = self.app.test_client()
+        self.assertEqual(public.get(f"/exams/{exam_id}").status_code, 404)
+        self.client.post(preview + "/publish", data={"csrf_token": token})
+        self.assertEqual(public.get(f"/exams/{exam_id}").status_code, 404)
+        data = {"csrf_token": token, **{f"solution_{n}": "b" for n in range(1, 46)}}
+        data["solution_45"] = "cancelled"
+        self.assertEqual(self.client.post(preview + "/solutions", data=data).status_code, 302)
+        with closing(connect(self.app.config["DATABASE"])) as db:
+            questions = load_questions(db, exam_id)
+        self.assertTrue(all(not q["needs_review"] for q in questions))
+        self.assertEqual(questions[0]["correct"], "b")
+        self.assertIn("administrador", questions[44]["excluded_reason"])
+        self.client.post(preview + "/publish", data={"csrf_token": token})
+        response = public.get(f"/exams/{exam_id}?mode=extension")
+        self.assertEqual(response.data.count(b'type="radio"'), 68)
+        self.assertEqual(create_app(self.config).test_client().get(f"/exams/{exam_id}").status_code, 200)
+        data["solution_1"] = "pending"
+        self.client.post(preview + "/solutions", data=data)
+        self.assertEqual(public.get(f"/exams/{exam_id}").status_code, 404)
+
+    def test_manual_changes_require_auth_csrf_and_valid_complete_form(self):
+        self.assertEqual(self.client.post("/admin/exams/1/solutions").status_code, 400)
+        token = self.token()
+        self.assertEqual(self.client.post("/admin/exams/1/solutions", data={
+            "csrf_token": token,
+        }).status_code, 302)
+        token = self.login()
+        self.assertEqual(self.client.post("/admin/exams/1/solutions", data={
+            "csrf_token": token, "solution_1": "x",
+        }).status_code, 400)
+        with closing(connect(self.app.config["DATABASE"])) as db:
+            self.assertEqual(load_questions(db, 1)[0]["correct"], "b")
+
+
 class SeedTests(unittest.TestCase):
     def test_all_bundled_seeds_start_and_restart_without_duplicates(self):
         config = {**self.config, "SEED_DIR": BASE / "pdfs"}
@@ -453,6 +534,36 @@ class SeedTests(unittest.TestCase):
         (self.pdfs / "ignore.txt").write_text("not an exam")
         create_app(self.config)
         self.assertEqual(self.rows(), [])
+
+    def test_failed_seed_does_not_block_valid_seed_and_errors_are_visible(self):
+        (self.pdfs / "2026-01__Broken.pdf").write_bytes(b"not a pdf")
+        (self.pdfs / "2026-07__Julio.pdf").write_bytes(CONTENT)
+        with self.assertLogs("app", level="ERROR"):
+            app = create_app({**self.config, "ADMIN_PASSWORD": "test"})
+        self.assertEqual(len(self.rows()), 1)
+        client = app.test_client()
+        client.get("/admin/login")
+        with client.session_transaction() as session:
+            token = session["csrf"]
+        client.post("/admin/login", data={"csrf_token": token, "password": "test"})
+        self.assertIn(b"Broken.pdf", client.get("/admin").data)
+        self.assertIn(b"Julio", client.get("/").data)
+
+    def test_unreadable_seed_is_private_and_manual_edits_survive_redeploy(self):
+        source = (BASE / "pdfs" / "2025-02__Febrero 2025 - Modelo 1.pdf").read_bytes()
+        (self.pdfs / "2025-02__Febrero.pdf").write_bytes(source)
+        with self.assertLogs("app", level="WARNING"):
+            app = create_app(self.config)
+        self.assertEqual(self.rows()[0]["published"], 0)
+        with closing(connect(app.config["DATABASE"])) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM questions WHERE needs_review=1").fetchone()[0], 45)
+            with db:
+                db.execute("UPDATE questions SET correct='c', excluded_reason='', needs_review=0")
+                db.execute("UPDATE exams SET published=1")
+        create_app(self.config)
+        self.assertEqual(self.rows()[0]["published"], 1)
+        with closing(connect(app.config["DATABASE"])) as db:
+            self.assertEqual(load_questions(db, 1)[0]["correct"], "c")
 
     def test_invalid_names_dates_and_documents_fail_explicitly(self):
         for filename, content in (

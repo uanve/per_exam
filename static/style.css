@@ -119,6 +119,11 @@ tbody th { font-weight: 550; }
 .right-answer { border-color: #7bbb9e; background: #edf8f0; }
 .wrong-answer { border-color: #dfab98; background: #fff2ed; }
 .answer-note { display: block; margin-top: 4px; font-size: 12px; }
+.history-passed { color: #1b654d; font-weight: 700; }
+.history-failed { color: #9c3626; font-weight: 700; }
+.exam-card > .attempt-status { font-size: 13px; }
+.exam-card > .attempt-status.history-passed { color: #1b654d; }
+.exam-card > .attempt-status.history-failed { color: #9c3626; }
 .login-panel { max-width: 480px; margin: 64px auto; }
 .login-panel h1 { font-size: 30px; }
 .login-panel .button { margin-top: 24px; }

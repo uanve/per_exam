@@ -28,6 +28,114 @@ function clearStorage(key) {
 }
 if (result) clearStorage(result.dataset.clearStorage);
 
+const historyKey = "rumbo-session-history-v1";
+const historyPanel = document.querySelector("#session-history");
+let historyAvailable = true;
+function historyError(error) {
+  historyAvailable = false;
+  console.warn("No se pudo acceder al historial de esta sesión.", error);
+  let notice = document.querySelector("#history-error");
+  if (!notice) {
+    notice = document.createElement("p");
+    notice.className = "notice error";
+    notice.id = "history-error";
+    notice.setAttribute("role", "alert");
+    (result || document.querySelector("main")).append(notice);
+  }
+  notice.textContent = "No se pudo guardar o leer el historial de esta sesión. Puedes seguir haciendo exámenes; tu resultado actual no cambia.";
+  notice.hidden = false;
+}
+function validHistoryEntry(entry) {
+  return entry && typeof entry === "object"
+    && typeof entry.id === "string" && entry.id.length > 0
+    && Number.isSafeInteger(entry.examId) && entry.examId > 0
+    && typeof entry.title === "string" && typeof entry.modeLabel === "string"
+    && ["per", "extension"].includes(entry.mode)
+    && Number.isInteger(entry.score) && Number.isInteger(entry.total)
+    && entry.score >= 0 && entry.score <= entry.total && entry.total <= 45
+    && typeof entry.passed === "boolean"
+    && typeof entry.completedAt === "string" && Number.isFinite(Date.parse(entry.completedAt));
+}
+function readHistory() {
+  try {
+    const entries = JSON.parse(sessionStorage.getItem(historyKey) || "[]");
+    if (!Array.isArray(entries) || !entries.every(validHistoryEntry)) {
+      throw new Error("Formato de historial inválido.");
+    }
+    return entries;
+  } catch (error) {
+    historyError(error);
+    return [];
+  }
+}
+function saveResultHistory() {
+  if (!result || !result.dataset.sessionResult) return;
+  try {
+    const entry = JSON.parse(result.dataset.sessionResult);
+    if (!validHistoryEntry(entry)) throw new Error("Resultado de sesión inválido.");
+    const entries = readHistory();
+    if (historyAvailable && !entries.some((previous) => previous.id === entry.id)) {
+      sessionStorage.setItem(historyKey, JSON.stringify([entry, ...entries]));
+    }
+  } catch (error) {
+    historyError(error);
+  }
+}
+function renderHistory() {
+  if (!historyPanel) return;
+  historyPanel.hidden = false;
+  const entries = readHistory();
+  const rows = document.querySelector("#session-history-rows");
+  rows.replaceChildren();
+  document.querySelector("#history-empty").hidden = entries.length > 0 || !historyAvailable;
+  document.querySelector("#history-table").hidden = entries.length === 0;
+  for (const entry of entries) {
+    const row = document.createElement("tr");
+    const nameCell = document.createElement("td");
+    const link = document.createElement("a");
+    link.href = `/exams/${entry.examId}?mode=${entry.mode}`;
+    link.textContent = entry.title;
+    nameCell.append(link);
+    row.append(nameCell);
+    for (const value of [
+      entry.modeLabel, new Date(entry.completedAt).toLocaleString("es-ES"),
+      `${entry.score} / ${entry.total}`, entry.passed ? "Aprobado" : "Suspendido",
+    ]) {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      row.append(cell);
+    }
+    row.lastElementChild.className = entry.passed ? "history-passed" : "history-failed";
+    rows.append(row);
+  }
+  for (const card of document.querySelectorAll("[data-history-exam]")) {
+    const latest = entries.find((entry) => entry.examId === Number(card.dataset.historyExam)
+      && entry.mode === card.dataset.historyMode);
+    const status = card.querySelector("[data-attempt-status]");
+    status.hidden = !latest;
+    status.textContent = latest ? `Último intento: ${latest.passed ? "Aprobado" : "Suspendido"} · ${latest.score}/${latest.total}` : "";
+    status.classList.toggle("history-passed", Boolean(latest?.passed));
+    status.classList.toggle("history-failed", Boolean(latest && !latest.passed));
+  }
+}
+if (result) saveResultHistory();
+if (historyPanel) {
+  renderHistory();
+  document.querySelector("#clear-session-history").addEventListener("click", () => {
+    try {
+      sessionStorage.removeItem(historyKey);
+      historyAvailable = true;
+      document.querySelector("#history-error").hidden = true;
+      renderHistory();
+    } catch (error) {
+      historyError(error);
+    }
+  });
+}
+window.addEventListener("pageshow", () => {
+  if (historyPanel) renderHistory();
+});
+
 const examForm = document.querySelector("#exam-form");
 if (examForm) {
   const key = examForm.dataset.storageKey;

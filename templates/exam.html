@@ -30,6 +30,7 @@
   </aside>
   <form method="post" id="exam-form" data-storage-key="rumbo-{{ exam.id }}-{{ mode }}" class="questions">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="attempt_id" value="{{ attempt_id }}">
     {% for question in questions %}
     <fieldset id="question-{{ question.number }}" class="question-card" data-number="{{ question.number }}">
       <legend><span class="question-number">{{ question.number }}</span> <span>UT{{ subject_for(question.number)[0] }} · {{ subject_for(question.number)[1] }}</span></legend>

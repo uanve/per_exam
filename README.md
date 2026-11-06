@@ -13,11 +13,14 @@ registrarse ni subir o abrir un PDF.
 | Ampliación desde PNB | 18, preguntas 28–45, UT7–11 | 15 | Carta: 2 errores |
 
 Las preguntas en blanco cuentan como errores, también para los límites por
-materia. Las preguntas anuladas (las cuatro casillas rojas), sin solución
-marcada o ausentes dentro de la numeración del PDF se excluyen y se indican
+materia. Las preguntas anuladas (las cuatro casillas rojas) o ausentes
+dentro de la numeración del PDF se excluyen y se indican
 expresamente en la web y en los logs de importación. No cuentan como aciertos,
 errores ni blancos, tampoco en los límites por materia. Se mantienen los
 mínimos de **32 aciertos PER y 15 ampliación**, aunque haya exclusiones.
+Si falta una solución o no se reconoce la plantilla de respuestas, el examen
+queda como borrador pendiente: el administrador debe asignar respuestas
+o anular preguntas expresamente antes de publicarlo.
 La corrección se hace en el servidor; las soluciones no aparecen
 en el HTML del examen antes de corregir. Es un modo de práctica sin
 temporizador (el examen PER oficial dura como máximo 90 minutos).
@@ -50,6 +53,10 @@ En local, si falta `SECRET_KEY`, se genera una clave persistente en
    e ilustraciones. El PDF subido no se conserva ni se sirve a los alumnos.
 4. Revisa el borrador y sus soluciones antes de publicarlo. Los borradores
    son privados y se pueden descartar.
+   En «Revisar» puedes elegir A–D, dejar pendiente o anular cada pregunta.
+   Pulsa «Guardar soluciones» y después «Publicar». No se admiten soluciones
+   pendientes al publicar. Editar las soluciones de un examen publicado lo
+   retira temporalmente del catálogo hasta volver a publicarlo.
 5. Al publicar, la convocatoria aparece en el catálogo, en ambas modalidades.
 
 El formato admitido es el del archivo incluido: primera página con 45
@@ -59,10 +66,11 @@ Se conserva el texto bilingüe catalán/castellano y se extraen las imágenes
 incrustadas. Se validan orden, cantidad de preguntas, opciones y soluciones.
 Se admiten opciones fragmentadas en líneas, preguntas idénticas repetidas
 entre páginas y casillas rojas que tapan la letra (se identifica su columna).
-Una o cuatro casillas marcadas tienen significado definido; dos o tres se
-rechazan como ambiguas. Los huecos internos de numeración se señalan como
+Una o cuatro casillas marcadas tienen significado definido; si hay dos o tres,
+la plantilla queda pendiente de solución manual, igual que una plantilla
+ilegible. Los huecos internos de numeración se señalan como
 preguntas ausentes y excluidas, sin inventar sus textos. Un PDF truncado al
-final, escaneado, cifrado, con otra plantilla de soluciones o sin texto
+final, escaneado, cifrado o sin texto
 extraíble se rechaza con un mensaje; no se adivinan respuestas.
 Otros diseños, figuras vectoriales o cambios de maquetación pueden requerir
 adaptar el importador. En administración se exige revisar el borrador antes de publicarlo.
@@ -72,8 +80,9 @@ No se ejecuta OCR ni se envían documentos a servicios externos.
 
 Deja tus PDFs en la carpeta [`pdfs/`](./pdfs) y súbelos al repositorio.
 En cada arranque, también después de un deploy en Railway, la aplicación
-importa y **publica automáticamente** los PDFs nuevos. No necesitas usar el
-panel de administración para estos archivos.
+importa y **publica automáticamente** los PDFs nuevos que tengan soluciones
+reconocibles. Los que requieran soluciones manuales quedan como borradores
+privados en administración.
 
 El nombre indica la fecha y el título que aparecerán en el catálogo:
 
@@ -90,10 +99,12 @@ directamente dentro de la carpeta (no se recorren subcarpetas).
 El PDF de ejemplo ya está colocado ahí con el mes de su portada.
 
 Se aplica la misma validación de preguntas y soluciones que en administración.
-Revisa los PDFs antes de subirlos: este flujo los publica directamente.
-Si el nombre, fecha o contenido no son válidos, el arranque falla con el
-nombre del archivo y el motivo en los logs de Railway; corrígelo y redespliega.
-Los archivos importados correctamente antes del fallo ya quedan guardados.
+Revisa los PDFs antes de subirlos. Una plantilla de soluciones ilegible no
+impide importar las preguntas: introduce las soluciones en administración.
+Si falla el nombre, la fecha o la extracción de preguntas, se registra el
+archivo y motivo en los logs y en el panel de administración. **La aplicación
+sigue arrancando** y continúa con los demás PDFs. Corrige el archivo y
+redespliega; las importaciones correctas se conservan.
 
 Los duplicados se detectan por contenido (SHA-256), incluso si cambias el
 nombre. Los siguientes despliegues no duplican ni modifican los exámenes
@@ -131,8 +142,27 @@ de 10 intentos de acceso por dirección en una ventana de 15 minutos.
 Haz copias del volumen. Para copiar SQLite en uso utiliza su API de backup
 o detén el servicio: no copies solo el archivo principal ignorando su WAL.
 Las respuestas de alumnos no se guardan en la base de datos: se conservan
-temporalmente en su navegador hasta corregir. La web sigue funcionando sin
-JavaScript, salvo el guardado local, el progreso y el botón de dejar en blanco.
+en `localStorage` del navegador hasta corregir.
+
+## Historial del alumno en el navegador
+
+Cada corrección guarda en `sessionStorage` un resumen del intento: examen,
+modalidad, fecha, puntuación y aprobado/suspendido. El catálogo muestra el
+último resultado por examen y modalidad y una tabla con todos los intentos
+de esta sesión, aunque se cambien los filtros. Se pueden borrar con
+«Borrar historial». Recargar el resultado o volver atrás no duplica el mismo
+intento; volver a enviar el examen sí crea uno nuevo.
+
+No se guardan respuestas ni soluciones dentro del historial ni se envía el
+historial al servidor. Se conserva al navegar o recargar en la misma pestaña,
+pero no se sincroniza entre dispositivos o pestañas independientes.
+Normalmente desaparece al cerrar la pestaña; el navegador puede restaurarlo
+si recupera una sesión cerrada. Es temporal: no se garantiza su conservación.
+Si el almacenamiento falla, se muestra un aviso y se puede seguir practicando.
+El historial es informativo, no un registro oficial de notas.
+
+La web sigue funcionando sin JavaScript, salvo el guardado local,
+el historial, el progreso y el botón de dejar en blanco.
 
 ## Pruebas
 
