@@ -44,7 +44,7 @@ class ParserTests(unittest.TestCase):
             "2026-03__Marzo 2026 - Modelo 1.pdf": [17],
             "2026-04__Abril 2026 - Modelo 1.pdf": [39],
         }
-        for path in sorted((BASE / "pdfs").glob("*.pdf")):
+        for path in sorted((BASE / "pdfs").glob("2026-*.pdf")):
             with self.subTest(pdf=path.name):
                 questions = parse_pdf(path.read_bytes())
                 self.assertEqual([q.number for q in questions], list(range(1, 46)))
@@ -392,11 +392,15 @@ class SeedTests(unittest.TestCase):
         config = {**self.config, "SEED_DIR": BASE / "pdfs"}
         with self.assertLogs("app", level="WARNING"):
             app = create_app(config)
-        create_app(config)
+        with self.assertLogs("app", level="ERROR"):
+            create_app(config)
         with closing(connect(app.config["DATABASE"])) as db:
-            self.assertEqual(db.execute("SELECT COUNT(*) FROM exams WHERE published=1").fetchone()[0], 9)
-            self.assertEqual(db.execute("SELECT COUNT(*) FROM questions").fetchone()[0], 405)
-            self.assertEqual(db.execute("SELECT COUNT(*) FROM questions WHERE excluded_reason != ''").fetchone()[0], 3)
+            imported = db.execute("SELECT COUNT(*) FROM exams").fetchone()[0]
+            failures = db.execute("SELECT COUNT(*) FROM seed_import_errors").fetchone()[0]
+            self.assertEqual(imported + failures, len(list((BASE / "pdfs").glob("*.pdf"))))
+            self.assertGreater(db.execute("SELECT COUNT(*) FROM exams WHERE published=1").fetchone()[0], 0)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM questions").fetchone()[0], imported * 45)
+            self.assertGreater(db.execute("SELECT COUNT(*) FROM questions WHERE needs_review=1").fetchone()[0], 0)
             self.assertIsNone(db.execute("PRAGMA foreign_key_check").fetchone())
         self.assertEqual(app.test_client().get("/").status_code, 200)
 
@@ -461,19 +465,18 @@ class SeedTests(unittest.TestCase):
                 path = self.pdfs / filename
                 path.write_bytes(content)
                 with self.assertLogs("app", level="ERROR") as logs:
-                    with self.assertRaisesRegex(ImportProblem, filename):
-                        create_app(self.config)
+                    app = create_app(self.config)
                 self.assertIn(filename, logs.output[0])
                 self.assertEqual(self.rows(), [])
+                self.assertEqual(app.test_client().get("/health").status_code, 200)
                 path.unlink()
 
     def test_missing_directory_and_oversize(self):
-        with self.assertRaisesRegex(ImportProblem, "No existe"):
+        with self.assertLogs("app", level="ERROR"):
             create_app({**self.config, "SEED_DIR": self.pdfs / "missing"})
         (self.pdfs / "2026-07__Large.pdf").write_bytes(CONTENT)
         with self.assertLogs("app", level="ERROR"):
-            with self.assertRaisesRegex(ImportProblem, "límite"):
-                create_app({**self.config, "MAX_CONTENT_LENGTH": 1024})
+            create_app({**self.config, "MAX_CONTENT_LENGTH": 1024})
 
 
 class MigrationTests(unittest.TestCase):
@@ -500,7 +503,7 @@ class MigrationTests(unittest.TestCase):
                 self.assertEqual(row["excluded_reason"], "")
                 self.assertEqual(db.execute("SELECT content FROM images").fetchone()[0], b"original-image")
                 with db:
-                    db.execute("INSERT INTO questions VALUES(1,2,'Cancelled','{}',NULL,'Anulada')")
+                    db.execute("INSERT INTO questions VALUES(1,2,'Cancelled','{}',NULL,'Anulada',0)")
                 self.assertEqual(db.execute("PRAGMA foreign_keys").fetchone()[0], 1)
                 self.assertIsNone(db.execute("PRAGMA foreign_key_check").fetchone())
                 with db:

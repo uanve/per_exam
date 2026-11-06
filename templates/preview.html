@@ -18,11 +18,24 @@
   </div>
   {% endif %}
 </div>
+<form method="post" action="{{ url_for('save_solutions', exam_id=exam.id) }}">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<div class="notice">Puedes asignar una respuesta, anular una pregunta o dejarla pendiente. No se puede publicar con soluciones pendientes. Guardar retira el examen del catálogo hasta que vuelvas a publicarlo.</div>
 {% for question in questions %}
 <article class="question-card">
   <h2>Pregunta {{ question.number }} · UT{{ subject_for(question.number)[0] }}</h2>
   {% if question.excluded_reason %}<div class="notice">Excluida de la corrección: {{ question.excluded_reason }}</div>{% endif %}
   {% include "_question.html" %}
+  <fieldset class="solution-picker">
+    <legend>Solución de la pregunta {{ question.number }}</legend>
+    {% for value, label in [('pending', 'Pendiente de revisión'), ('a', 'A'), ('b', 'B'), ('c', 'C'), ('d', 'D'), ('cancelled', 'Anulada / excluida')] %}
+    <label class="inline">
+      <input type="radio" name="solution_{{ question.number }}" value="{{ value }}"
+        {% if (value == 'pending' and question.needs_review) or (value == 'cancelled' and question.excluded_reason and not question.needs_review) or value == question.correct %}checked{% endif %}>
+      {{ label }}
+    </label>
+    {% endfor %}
+  </fieldset>
   <div class="options">{% for letter, text in question.options.items() %}
     <div class="option review-option {% if letter == question.correct %}right-answer{% endif %}">
       <span class="letter">{{ letter|upper }}</span><span>{{ text }}{% if letter == question.correct %}<strong class="answer-note">Solución importada</strong>{% endif %}</span>
@@ -30,4 +43,6 @@
   {% endfor %}</div>
 </article>
 {% endfor %}
+<button type="submit" class="button">Guardar soluciones</button>
+</form>
 {% endblock %}

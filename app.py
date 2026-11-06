@@ -63,8 +63,11 @@ def create_app(test_config: dict | None = None) -> Flask:
         if app.config["SEED_EXAM"]:
             seed_dir = Path(app.config["SEED_DIR"])
             if not seed_dir.is_dir():
-                raise ImportProblem(f"No existe la carpeta de exámenes iniciales: {seed_dir}")
-            for path in sorted(seed_dir.iterdir()):
+                message = f"No existe la carpeta de exámenes iniciales: {seed_dir}"
+                app.logger.error("%s", message)
+                with db:
+                    db.execute("INSERT OR REPLACE INTO seed_import_errors VALUES (?, ?)", (str(seed_dir), message))
+            for path in sorted(seed_dir.iterdir()) if seed_dir.is_dir() else []:
                 if not path.is_file() or path.suffix.lower() != ".pdf":
                     continue
                 try:
@@ -84,20 +87,32 @@ def create_app(test_config: dict | None = None) -> Flask:
                     content = path.read_bytes()
                     digest = hashlib.sha256(content).hexdigest()
                     if db.execute("SELECT id FROM exams WHERE digest = ?", (digest,)).fetchone():
+                        with db:
+                            db.execute("DELETE FROM seed_import_errors WHERE filename = ?", (path.name,))
                         continue
-                    questions = parse_pdf(content)
-                    insert_exam(db, content, questions, title, exam_date, published=True)
+                    questions = parse_pdf(content, allow_manual_key=True)
+                    pending = any(question.needs_review for question in questions)
+                    insert_exam(db, content, questions, title, exam_date, published=not pending)
+                    with db:
+                        db.execute("DELETE FROM seed_import_errors WHERE filename = ?", (path.name,))
                     for question in questions:
                         if question.excluded_reason:
                             app.logger.warning(
                                 "%s: pregunta %s excluida: %s",
                                 path.name, question.number, question.excluded_reason,
                             )
-                    app.logger.info("Examen inicial importado y publicado: %s", path.name)
+                    app.logger.info(
+                        "Examen inicial importado (%s): %s",
+                        "borrador pendiente de soluciones" if pending else "publicado", path.name,
+                    )
                 except (ImportProblem, OSError) as error:
                     message = f"No se pudo importar el examen inicial {path.name}: {error}"
                     app.logger.error("%s", message)
-                    raise ImportProblem(message) from error
+                    with db:
+                        db.execute(
+                            "INSERT OR REPLACE INTO seed_import_errors VALUES (?, ?)",
+                            (path.name, message),
+                        )
 
     def database() -> sqlite3.Connection:
         if "db" not in g:
@@ -272,7 +287,7 @@ def create_app(test_config: dict | None = None) -> Flask:
                 digest = hashlib.sha256(content).hexdigest()
                 if database().execute("SELECT id FROM exams WHERE digest = ?", (digest,)).fetchone():
                     raise ImportProblem("Este PDF ya está importado. Revisa los exámenes y borradores existentes.")
-                questions = parse_pdf(content)
+                questions = parse_pdf(content, allow_manual_key=True)
                 for question in questions:
                     if question.excluded_reason:
                         flash(
@@ -287,9 +302,15 @@ def create_app(test_config: dict | None = None) -> Flask:
                 app.logger.warning("Importación rechazada: %s", error)
                 flash(str(error), "error")
                 exams = database().execute("SELECT * FROM exams ORDER BY exam_date DESC, id DESC").fetchall()
-                return render_template("admin.html", exams=exams), 400
+                return render_template(
+                    "admin.html", exams=exams,
+                    import_errors=database().execute("SELECT * FROM seed_import_errors ORDER BY filename").fetchall(),
+                ), 400
         exams = database().execute("SELECT * FROM exams ORDER BY exam_date DESC, id DESC").fetchall()
-        return render_template("admin.html", exams=exams)
+        return render_template(
+            "admin.html", exams=exams,
+            import_errors=database().execute("SELECT * FROM seed_import_errors ORDER BY filename").fetchall(),
+        )
 
     @app.get("/admin/exams/<int:exam_id>")
     @admin_required
@@ -299,10 +320,43 @@ def create_app(test_config: dict | None = None) -> Flask:
             "preview.html", exam=exam, questions=load_questions(database(), exam_id),
         )
 
+    @app.post("/admin/exams/<int:exam_id>/solutions")
+    @admin_required
+    def save_solutions(exam_id):
+        get_exam(exam_id, allow_draft=True)
+        questions = load_questions(database(), exam_id)
+        updates = []
+        for question in questions:
+            values = request.form.getlist(f"solution_{question['number']}")
+            if len(values) != 1 or values[0] not in ("pending", "cancelled", "a", "b", "c", "d"):
+                abort(400, description=f"Solución no válida para la pregunta {question['number']}.")
+            value = values[0]
+            if value in ("a", "b", "c", "d"):
+                if not question["text"] or not all(question["options"].get(letter) for letter in "abcd"):
+                    abort(400, description=f"La pregunta {question['number']} no tiene texto y cuatro opciones completas.")
+                updates.append((value, "", 0, exam_id, question["number"]))
+            elif value == "cancelled":
+                updates.append((None, "Anulada por el administrador.", 0, exam_id, question["number"]))
+            else:
+                updates.append((None, "Pendiente de solución manual.", 1, exam_id, question["number"]))
+        with database() as db:
+            db.executemany(
+                "UPDATE questions SET correct=?, excluded_reason=?, needs_review=? WHERE exam_id=? AND number=?",
+                updates,
+            )
+            # Editing a live exam requires an explicit re-publication.
+            db.execute("UPDATE exams SET published = 0 WHERE id = ?", (exam_id,))
+        flash("Soluciones guardadas. Revisa y publica el borrador cuando esté completo.", "success")
+        return redirect(url_for("preview", exam_id=exam_id))
+
     @app.post("/admin/exams/<int:exam_id>/publish")
     @admin_required
     def publish(exam_id):
         get_exam(exam_id, allow_draft=True)
+        questions = load_questions(database(), exam_id)
+        if len(questions) != 45 or any(question["needs_review"] for question in questions):
+            flash("No se puede publicar: hay soluciones pendientes de revisión.", "error")
+            return redirect(url_for("preview", exam_id=exam_id))
         with database() as db:
             db.execute("UPDATE exams SET published = 1 WHERE id = ?", (exam_id,))
         flash("Examen publicado. Ya está disponible para los alumnos.", "success")

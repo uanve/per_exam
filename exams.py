@@ -38,6 +38,7 @@ class Question:
     options: dict[str, str] = field(default_factory=dict)
     images: list[bytes] = field(default_factory=list)
     excluded_reason: str = ""
+    needs_review: bool = False
 
 
 def subject_for(number: int) -> tuple[int, str]:
@@ -95,7 +96,7 @@ def extract_key(page: pymupdf.Page) -> dict[int, tuple[str | None, str]]:
     return answers
 
 
-def parse_pdf(content: bytes) -> list[Question]:
+def parse_pdf(content: bytes, *, allow_manual_key: bool = False) -> list[Question]:
     if not content.startswith(b"%PDF-"):
         raise ImportProblem("El archivo no es un PDF válido.")
     try:
@@ -105,7 +106,14 @@ def parse_pdf(content: bytes) -> list[Question]:
     with document:
         if document.needs_pass or not 2 <= len(document) <= 40:
             raise ImportProblem("El PDF debe tener entre 2 y 40 páginas y no estar protegido.")
-        answers = extract_key(document[0])
+        key_problem = ""
+        try:
+            answers = extract_key(document[0])
+        except ImportProblem as error:
+            if not allow_manual_key:
+                raise
+            key_problem = str(error)
+            answers = {number: (None, key_problem) for number in range(1, 46)}
         questions: list[Question] = []
         current: Question | None = None
         option: str | None = None
@@ -152,7 +160,13 @@ def parse_pdf(content: bytes) -> list[Question]:
                     if number < (questions[-1].number if questions else 0) or number not in answers:
                         raise ImportProblem(f"Orden de preguntas inesperado: {number}. Revisa el formato.")
                     correct, reason = answers[number]
-                    current = Question(number, start[2], correct, excluded_reason=reason)
+                    pending = allow_manual_key and (
+                        bool(key_problem) or reason == "Sin solución marcada en el PDF original."
+                    )
+                    current = Question(
+                        number, start[2], correct, excluded_reason=reason,
+                        needs_review=pending,
+                    )
                     questions.append(current)
                     option = None
                 elif choice and current is not None:
@@ -189,7 +203,7 @@ def parse_pdf(content: bytes) -> list[Question]:
                 ))
         questions.sort(key=lambda question: question.number)
         for question in questions:
-            if question.excluded_reason:
+            if question.excluded_reason and not question.needs_review:
                 continue
             if not question.text or set(question.options) != set("abcd") or not all(question.options.values()):
                 raise ImportProblem(f"La pregunta {question.number} no tiene enunciado y cuatro opciones completas.")
@@ -199,6 +213,8 @@ def parse_pdf(content: bytes) -> list[Question]:
 def grade(questions: list[dict], answers: dict[str, str], mode: str) -> dict:
     rules = MODES[mode]
     in_mode = [q for q in questions if q["number"] >= rules["first"]]
+    if any(q.get("needs_review") for q in in_mode):
+        raise ValueError("El examen tiene soluciones pendientes de revisión.")
     if len(in_mode) != rules["total"]:
         raise ValueError("El examen no tiene el número de preguntas requerido.")
     excluded = [q for q in in_mode if q.get("excluded_reason")]

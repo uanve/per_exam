@@ -1,6 +1,13 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="page-heading"><p class="eyebrow">ADMINISTRACIÓN</p><h1>Tu banco de exámenes</h1><p>El PDF se transforma en preguntas, opciones, soluciones e imágenes. Los alumnos no ven el PDF.</p></div>
+{% if import_errors %}
+<section class="notice error">
+  <h2>PDFs que no se han podido importar</h2>
+  <p>La web sigue funcionando. Corrige estos archivos y redespliega; las importaciones válidas se conservan.</p>
+  <ul>{% for error in import_errors %}<li><strong>{{ error.filename }}</strong>: {{ error.message }}</li>{% endfor %}</ul>
+</section>
+{% endif %}
 <section class="panel">
   <h2>Importar convocatoria</h2>
   <p>PDF como el ejemplo: plantilla de 45 soluciones con casillas rojas y preguntas numeradas con opciones a–d. Las cuatro casillas rojas indican una pregunta anulada. Se muestran avisos para las preguntas excluidas. No se admiten PDFs escaneados.</p>
@@ -11,7 +18,7 @@
     <label>PDF de origen (máximo 15 MB)<input type="file" name="pdf" accept=".pdf,application/pdf" required></label>
     <button class="button" type="submit">Importar y revisar</button>
   </form>
-  <p class="small-muted">La importación queda como borrador. Revisa las 45 preguntas y sus soluciones antes de publicar.</p>
+  <p class="small-muted">La importación queda como borrador. Si la plantilla de soluciones no se puede leer, introduce las respuestas o anula las preguntas en «Revisar» antes de publicar.</p>
 </section>
 <section class="panel">
   <h2>Exámenes importados</h2>
