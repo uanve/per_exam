@@ -20,7 +20,10 @@ CREATE TABLE IF NOT EXISTS questions (
     number INTEGER NOT NULL,
     text TEXT NOT NULL,
     options TEXT NOT NULL,
-    correct TEXT NOT NULL CHECK(correct IN ('a','b','c','d')),
+    correct TEXT CHECK(correct IN ('a','b','c','d')),
+    excluded_reason TEXT NOT NULL DEFAULT '',
+    CHECK((correct IS NULL AND excluded_reason != '') OR
+          (correct IS NOT NULL AND excluded_reason = '')),
     PRIMARY KEY (exam_id, number)
 );
 CREATE TABLE IF NOT EXISTS images (
@@ -46,6 +49,39 @@ def connect(path: Path) -> sqlite3.Connection:
     return db
 
 
+def initialize_database(db: sqlite3.Connection) -> None:
+    db.executescript(SCHEMA)
+    if "excluded_reason" in {row["name"] for row in db.execute("PRAGMA table_info(questions)")}:
+        return
+    db.execute("PRAGMA foreign_keys = OFF")
+    try:
+        with db:
+            db.execute("BEGIN")
+            db.execute("""
+                CREATE TABLE questions_updated (
+                    exam_id INTEGER NOT NULL REFERENCES exams(id) ON DELETE CASCADE,
+                    number INTEGER NOT NULL,
+                    text TEXT NOT NULL,
+                    options TEXT NOT NULL,
+                    correct TEXT CHECK(correct IN ('a','b','c','d')),
+                    excluded_reason TEXT NOT NULL DEFAULT '',
+                    CHECK((correct IS NULL AND excluded_reason != '') OR
+                          (correct IS NOT NULL AND excluded_reason = '')),
+                    PRIMARY KEY (exam_id, number)
+                )
+            """)
+            db.execute("""
+                INSERT INTO questions_updated(exam_id, number, text, options, correct)
+                SELECT exam_id, number, text, options, correct FROM questions
+            """)
+            db.execute("DROP TABLE questions")
+            db.execute("ALTER TABLE questions_updated RENAME TO questions")
+    finally:
+        db.execute("PRAGMA foreign_keys = ON")
+    if db.execute("PRAGMA foreign_key_check").fetchone():
+        raise RuntimeError("La migración ha detectado referencias de base de datos inválidas.")
+
+
 def insert_exam(
     db: sqlite3.Connection, content: bytes, questions: list[Question],
     title: str, exam_date: str, published: bool = False,
@@ -60,8 +96,11 @@ def insert_exam(
             raise RuntimeError("No se pudo crear el examen.")
         for question in questions:
             db.execute(
-                "INSERT INTO questions VALUES (?, ?, ?, ?, ?)",
-                (exam_id, question.number, question.text, json.dumps(question.options), question.correct),
+                "INSERT INTO questions VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    exam_id, question.number, question.text, json.dumps(question.options),
+                    question.correct, question.excluded_reason,
+                ),
             )
             db.executemany(
                 "INSERT INTO images VALUES (?, ?, ?, ?)",
@@ -83,5 +122,6 @@ def load_questions(db: sqlite3.Connection, exam_id: int) -> list[dict]:
             "number": row["number"], "text": row["text"],
             "options": json.loads(row["options"]), "correct": row["correct"],
             "image_count": image_counts.get(row["number"], 0),
+            "excluded_reason": row["excluded_reason"],
         })
     return result

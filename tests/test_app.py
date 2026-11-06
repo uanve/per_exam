@@ -3,12 +3,13 @@ import unittest
 from contextlib import closing
 from io import BytesIO
 from pathlib import Path
+from unittest.mock import Mock
 
 import pymupdf
 
 from app import BASE, create_app
-from exams import ImportProblem, grade, parse_pdf, subject_for
-from storage import connect, load_questions
+from exams import ImportProblem, extract_key, grade, parse_pdf, subject_for
+from storage import SCHEMA, connect, initialize_database, load_questions
 
 
 CONTENT = (BASE / "pdfs" / "2026-07__Julio 2026 - Modelo 3.pdf").read_bytes()
@@ -16,6 +17,54 @@ EXPECTED_KEY = "bbccbbccbdbcddcbdddccabadbacadbbbcddcbbacdacc"
 
 
 class ParserTests(unittest.TestCase):
+    def test_missing_solution_is_excluded_but_partial_multiple_is_rejected(self):
+        with pymupdf.open(stream=CONTENT, filetype="pdf") as doc:
+            page = doc[0]
+            red = [
+                drawing for drawing in page.get_drawings()
+                if drawing.get("fill") == (1.0, 0.0, 0.0)
+            ]
+            self.assertEqual(len(red), 45)
+            wrapped = Mock(wraps=page)
+            wrapped.get_drawings.return_value = red[1:]
+            key = extract_key(wrapped)
+            self.assertIsNone(key[1][0])
+            self.assertIn("Sin solución", key[1][1])
+            first = red[0]
+            extra = dict(first)
+            rect = first["rect"]
+            extra["rect"] = pymupdf.Rect(rect.x0 + 16, rect.y0, rect.x1 + 16, rect.y1)
+            wrapped.get_drawings.return_value = [*red, extra]
+            with self.assertRaisesRegex(ImportProblem, "ambiguas"):
+                extract_key(wrapped)
+
+    def test_all_bundled_pdfs(self):
+        expected_exclusions = {
+            "2026-02__Febrero 2026 - Modelo 2.pdf": [45],
+            "2026-03__Marzo 2026 - Modelo 1.pdf": [17],
+            "2026-04__Abril 2026 - Modelo 1.pdf": [39],
+        }
+        for path in sorted((BASE / "pdfs").glob("*.pdf")):
+            with self.subTest(pdf=path.name):
+                questions = parse_pdf(path.read_bytes())
+                self.assertEqual([q.number for q in questions], list(range(1, 46)))
+                self.assertEqual(
+                    [q.number for q in questions if q.excluded_reason],
+                    expected_exclusions.get(path.name, []),
+                )
+                for question in questions:
+                    if question.excluded_reason:
+                        self.assertIsNone(question.correct)
+                    else:
+                        self.assertIn(question.correct, "abcd")
+                        self.assertTrue(all(question.options.get(letter) for letter in "abcd"))
+                        self.assertNotRegex(question.text, "Patrón/ona")
+        # These marked cells have no extractable letter in the source.
+        march = parse_pdf((BASE / "pdfs" / "2026-03__Marzo 2026 - Modelo 2.pdf").read_bytes())
+        self.assertEqual(march[19].correct, "d")
+        self.assertEqual(march[21].correct, "b")
+        self.assertEqual(march[44].correct, "c")
+
     def test_real_pdf(self):
         questions = parse_pdf(CONTENT)
         self.assertEqual(len(questions), 45)
@@ -121,6 +170,36 @@ class GradingTests(unittest.TestCase):
         self.assertEqual(subject_for(41)[0], 10)
         self.assertEqual(subject_for(42)[0], 11)
 
+    def test_cancellation_keeps_original_minimum_and_ignores_answers(self):
+        self.questions[44].update(correct=None, excluded_reason="Anulada")
+        self.mark_wrong([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
+        self.answers["45"] = "invalid-but-excluded"
+        result = grade(self.questions, self.answers, "per")
+        self.assertTrue(result["passed"])
+        self.assertEqual(result["score"], 32)
+        self.assertEqual(result["total"], 44)
+        self.assertEqual(result["units"][-1]["total"], 3)
+        self.mark_wrong([28])
+        self.assertFalse(grade(self.questions, self.answers, "per")["passed"])
+        self.answers = {str(n): "a" for n in range(1, 46)}
+        self.mark_wrong([28, 29])
+        result = grade(self.questions, self.answers, "extension")
+        self.assertEqual(result["score"], 15)
+        self.assertEqual(result["total"], 17)
+        self.assertTrue(result["passed"])
+        self.mark_wrong([30])
+        self.assertFalse(grade(self.questions, self.answers, "extension")["passed"])
+
+    def test_cancelled_balizamiento_is_not_an_error_or_blank(self):
+        self.questions[16].update(correct=None, excluded_reason="Anulada")
+        self.answers.pop("17")
+        self.mark_wrong([13, 14])
+        result = grade(self.questions, self.answers, "per")
+        self.assertTrue(result["passed"])
+        self.assertEqual(result["blank"], 0)
+        self.assertEqual(result["units"][4]["errors"], 2)
+        self.assertEqual(result["units"][4]["total"], 4)
+
 
 class WebTests(unittest.TestCase):
     def setUp(self):
@@ -130,6 +209,10 @@ class WebTests(unittest.TestCase):
             "TESTING": True, "DATA_DIR": self.temp.name,
             "SECRET_KEY": "test-key-not-for-production", "ADMIN_PASSWORD": "test-password",
         }
+        seed_dir = Path(self.temp.name) / "pdfs"
+        seed_dir.mkdir()
+        (seed_dir / "2026-07__Julio 2026 - Modelo 3.pdf").write_bytes(CONTENT)
+        self.config["SEED_DIR"] = seed_dir
         self.app = create_app(self.config)
         self.client = self.app.test_client()
 
@@ -279,8 +362,44 @@ class WebTests(unittest.TestCase):
         response = self.upload(b"%PDF-" + b"x" * 2048, token)
         self.assertEqual(response.status_code, 413)
 
+    def test_cancelled_question_import_and_web_scoring(self):
+        token = self.login()
+        content = (BASE / "pdfs" / "2026-02__Febrero 2026 - Modelo 2.pdf").read_bytes()
+        response = self.upload(content, token)
+        preview = response.headers["Location"]
+        self.assertIn(b"Anulada", self.client.get(preview).data)
+        self.client.post(preview + "/publish", data={"csrf_token": token})
+        exam_id = int(preview.rsplit("/", 1)[1])
+        response = self.client.get(f"/exams/{exam_id}?mode=extension")
+        self.assertEqual(response.data.count(b'type="radio"'), 68)
+        self.assertNotIn(b'name="q45"', response.data)
+        self.assertIn(b"Anulada", response.data)
+        catalogue = self.client.get("/?mode=extension").data
+        self.assertIn(b"17 preguntas", catalogue)
+        with closing(connect(self.app.config["DATABASE"])) as db:
+            questions = load_questions(db, exam_id)
+        answers = {"q" + str(q["number"]): q["correct"] for q in questions if q["correct"]}
+        response = self.client.post(f"/exams/{exam_id}?mode=extension", data={
+            **answers, "csrf_token": token,
+        })
+        self.assertIn(b"17 <span>/ 17", response.data)
+        self.assertIn(b"0 en blanco", response.data)
+        self.assertIn(b"Anulada", response.data)
+
 
 class SeedTests(unittest.TestCase):
+    def test_all_bundled_seeds_start_and_restart_without_duplicates(self):
+        config = {**self.config, "SEED_DIR": BASE / "pdfs"}
+        with self.assertLogs("app", level="WARNING"):
+            app = create_app(config)
+        create_app(config)
+        with closing(connect(app.config["DATABASE"])) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM exams WHERE published=1").fetchone()[0], 9)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM questions").fetchone()[0], 405)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM questions WHERE excluded_reason != ''").fetchone()[0], 3)
+            self.assertIsNone(db.execute("PRAGMA foreign_key_check").fetchone())
+        self.assertEqual(app.test_client().get("/").status_code, 200)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -355,6 +474,38 @@ class SeedTests(unittest.TestCase):
         with self.assertLogs("app", level="ERROR"):
             with self.assertRaisesRegex(ImportProblem, "límite"):
                 create_app({**self.config, "MAX_CONTENT_LENGTH": 1024})
+
+
+class MigrationTests(unittest.TestCase):
+    def test_legacy_questions_and_images_survive_migration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with closing(connect(Path(directory) / "db.sqlite3")) as db:
+                db.execute("""
+                    CREATE TABLE questions (
+                        exam_id INTEGER NOT NULL REFERENCES exams(id) ON DELETE CASCADE,
+                        number INTEGER NOT NULL, text TEXT NOT NULL, options TEXT NOT NULL,
+                        correct TEXT NOT NULL CHECK(correct IN ('a','b','c','d')),
+                        PRIMARY KEY(exam_id, number)
+                    )
+                """)
+                db.executescript(SCHEMA)
+                with db:
+                    db.execute("INSERT INTO exams(id,title,exam_date,digest) VALUES(1,'Old','2026-07','old')")
+                    db.execute("INSERT INTO questions VALUES(1,1,'Original','{}','b')")
+                    db.execute("INSERT INTO images VALUES(1,1,0,?)", (b"original-image",))
+                initialize_database(db)
+                initialize_database(db)
+                row = db.execute("SELECT * FROM questions").fetchone()
+                self.assertEqual(row["correct"], "b")
+                self.assertEqual(row["excluded_reason"], "")
+                self.assertEqual(db.execute("SELECT content FROM images").fetchone()[0], b"original-image")
+                with db:
+                    db.execute("INSERT INTO questions VALUES(1,2,'Cancelled','{}',NULL,'Anulada')")
+                self.assertEqual(db.execute("PRAGMA foreign_keys").fetchone()[0], 1)
+                self.assertIsNone(db.execute("PRAGMA foreign_key_check").fetchone())
+                with db:
+                    db.execute("DELETE FROM exams WHERE id=1")
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM images").fetchone()[0], 0)
 
 
 if __name__ == "__main__":

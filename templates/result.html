@@ -6,6 +6,10 @@
   <h1>{{ '¡Has aprobado!' if result.passed else 'Todavía no has aprobado' }}</h1>
   <p class="score">{{ result.score }} <span>/ {{ result.total }} aciertos</span></p>
   <p>{{ result.total - result.score }} errores, incluidos {{ result.blank }} en blanco · Mínimo necesario: {{ modes[mode].minimum }} aciertos.</p>
+  {% if result.excluded %}
+  <p>{{ result.excluded|length }} pregunta(s) excluida(s), sin efecto en la puntuación:</p>
+  <ul>{% for question in result.excluded %}<li>Pregunta {{ question.number }}: {{ question.excluded_reason }}</li>{% endfor %}</ul>
+  {% endif %}
   {% if result.failures %}<ul>{% for failure in result.failures %}<li>{{ failure }}</li>{% endfor %}</ul>{% else %}<p>Cumples el mínimo de aciertos y todos los límites por materia.</p>{% endif %}
   <div class="actions">
     <a class="button" href="{{ url_for('exam_page', exam_id=exam.id, mode=mode) }}">Volver a practicar</a>

@@ -21,6 +21,7 @@
 {% for question in questions %}
 <article class="question-card">
   <h2>Pregunta {{ question.number }} · UT{{ subject_for(question.number)[0] }}</h2>
+  {% if question.excluded_reason %}<div class="notice">Excluida de la corrección: {{ question.excluded_reason }}</div>{% endif %}
   {% include "_question.html" %}
   <div class="options">{% for letter, text in question.options.items() %}
     <div class="option review-option {% if letter == question.correct %}right-answer{% endif %}">

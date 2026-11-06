@@ -17,7 +17,7 @@ from werkzeug.exceptions import RequestEntityTooLarge
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from exams import ImportProblem, MODES, grade, parse_pdf, subject_for
-from storage import SCHEMA, connect, insert_exam, load_questions
+from storage import connect, initialize_database, insert_exam, load_questions
 
 
 BASE = Path(__file__).resolve().parent
@@ -59,7 +59,7 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     with closing(connect(app.config["DATABASE"])) as db:
         db.execute("PRAGMA journal_mode = WAL")
-        db.executescript(SCHEMA)
+        initialize_database(db)
         if app.config["SEED_EXAM"]:
             seed_dir = Path(app.config["SEED_DIR"])
             if not seed_dir.is_dir():
@@ -85,7 +85,14 @@ def create_app(test_config: dict | None = None) -> Flask:
                     digest = hashlib.sha256(content).hexdigest()
                     if db.execute("SELECT id FROM exams WHERE digest = ?", (digest,)).fetchone():
                         continue
-                    insert_exam(db, content, parse_pdf(content), title, exam_date, published=True)
+                    questions = parse_pdf(content)
+                    insert_exam(db, content, questions, title, exam_date, published=True)
+                    for question in questions:
+                        if question.excluded_reason:
+                            app.logger.warning(
+                                "%s: pregunta %s excluida: %s",
+                                path.name, question.number, question.excluded_reason,
+                            )
                     app.logger.info("Examen inicial importado y publicado: %s", path.name)
                 except (ImportProblem, OSError) as error:
                     message = f"No se pudo importar el examen inicial {path.name}: {error}"
@@ -162,9 +169,11 @@ def create_app(test_config: dict | None = None) -> Flask:
         month = request.args.get("month", "").strip()
         query = request.args.get("q", "").strip()[:100]
         exams = database().execute(
-            "SELECT * FROM exams WHERE published = 1 AND exam_date LIKE ? "
+            "SELECT exams.*, (SELECT COUNT(*) FROM questions WHERE questions.exam_id = exams.id "
+            "AND number >= ? AND excluded_reason = '') AS active_count "
+            "FROM exams WHERE published = 1 AND exam_date LIKE ? "
             "AND title LIKE ? ORDER BY exam_date DESC, id DESC",
-            (month + "%", "%" + query + "%"),
+            (MODES[mode]["first"], month + "%", "%" + query + "%"),
         ).fetchall()
         return render_template("index.html", exams=exams, mode=mode, month=month, query=query)
 
@@ -187,7 +196,11 @@ def create_app(test_config: dict | None = None) -> Flask:
             except ValueError as error:
                 abort(400, description=str(error))
             return render_template("result.html", exam=exam, mode=mode, result=result)
-        return render_template("exam.html", exam=exam, mode=mode, questions=questions)
+        return render_template(
+            "exam.html", exam=exam, mode=mode,
+            questions=[q for q in questions if not q["excluded_reason"]],
+            excluded=[q for q in questions if q["excluded_reason"]],
+        )
 
     @app.get("/images/<int:exam_id>/<int:number>/<int:position>")
     def image(exam_id, number, position):
@@ -260,6 +273,11 @@ def create_app(test_config: dict | None = None) -> Flask:
                 if database().execute("SELECT id FROM exams WHERE digest = ?", (digest,)).fetchone():
                     raise ImportProblem("Este PDF ya está importado. Revisa los exámenes y borradores existentes.")
                 questions = parse_pdf(content)
+                for question in questions:
+                    if question.excluded_reason:
+                        flash(
+                            f"Pregunta {question.number} excluida: {question.excluded_reason}", "error",
+                        )
                 try:
                     exam_id = insert_exam(database(), content, questions, title, exam_date)
                 except sqlite3.IntegrityError as error:

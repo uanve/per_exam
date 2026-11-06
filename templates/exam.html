@@ -7,6 +7,13 @@
   <h1>{{ exam.title }}</h1>
   <p>{{ questions|length }} preguntas · Una respuesta por pregunta · Puedes corregir aunque dejes preguntas en blanco.</p>
 </div>
+{% if excluded %}
+<div class="notice">
+  <strong>Preguntas excluidas: no cuentan como aciertos, errores ni blancos.</strong>
+  <ul>{% for question in excluded %}<li>Pregunta {{ question.number }}: {{ question.excluded_reason }}</li>{% endfor %}</ul>
+  El mínimo se mantiene en {{ modes[mode].minimum }} aciertos.
+</div>
+{% endif %}
 <div class="notice">Para UT11 necesitarás tu carta náutica del Estrecho y material de navegación. El PDF de origen no incluye la carta. {% if mode == 'per' %}La duración oficial máxima es de 90 minutos.{% endif %} Aquí puedes practicar sin límite de tiempo.</div>
 <div class="exam-layout">
   <aside class="exam-sidebar">

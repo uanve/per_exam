@@ -3,7 +3,7 @@
 <div class="page-heading"><p class="eyebrow">ADMINISTRACIÓN</p><h1>Tu banco de exámenes</h1><p>El PDF se transforma en preguntas, opciones, soluciones e imágenes. Los alumnos no ven el PDF.</p></div>
 <section class="panel">
   <h2>Importar convocatoria</h2>
-  <p>PDF como el ejemplo: 45 soluciones marcadas con casillas rojas en la primera página y después 45 preguntas numeradas, con opciones a–d. No se admiten PDFs escaneados.</p>
+  <p>PDF como el ejemplo: plantilla de 45 soluciones con casillas rojas y preguntas numeradas con opciones a–d. Las cuatro casillas rojas indican una pregunta anulada. Se muestran avisos para las preguntas excluidas. No se admiten PDFs escaneados.</p>
   <form method="post" enctype="multipart/form-data" class="upload-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label>Título del examen<input name="title" maxlength="150" value="{{ request.form.get('title', '') }}" required placeholder="Julio 2026 · Modelo 3"></label>

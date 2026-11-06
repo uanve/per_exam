@@ -36,7 +36,7 @@
       <div class="card-top"><span class="tag">CONVOCATORIA {{ exam.exam_date }}</span><span class="small-muted">CAT / ES</span></div>
       <h3>{{ exam.title }}</h3>
       <p>{{ modes[mode].label }}</p>
-      <div class="exam-meta"><span>{{ modes[mode].total }} preguntas</span><span>Tipo test · 4 opciones</span></div>
+      <div class="exam-meta"><span>{{ exam.active_count }} preguntas{% if exam.active_count != modes[mode].total %} · {{ modes[mode].total - exam.active_count }} excluida(s){% endif %}</span><span>Tipo test · 4 opciones</span></div>
       <a class="button full" href="{{ url_for('exam_page', exam_id=exam.id, mode=mode) }}">Empezar examen <span aria-hidden="true">→</span></a>
     </article>
   {% else %}
@@ -48,5 +48,6 @@
   <h3>¿Cuándo se aprueba?</h3>
   <p><strong>PER completo:</strong> al menos 32 de 45. Máximo 2 errores en balizamiento, 5 en RIPA y 2 en carta de navegación.</p>
   <p><strong>Ampliación desde PNB:</strong> al menos 15 de 18 (UT 7–11), con máximo 2 errores en carta. Las preguntas en blanco cuentan como errores.</p>
+  <p>Las preguntas excluidas se indican en cada examen y no puntúan. Los mínimos de 32/15 aciertos se mantienen.</p>
 </aside>
 {% endblock %}

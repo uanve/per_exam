@@ -13,7 +13,12 @@ registrarse ni subir o abrir un PDF.
 | Ampliación desde PNB | 18, preguntas 28–45, UT7–11 | 15 | Carta: 2 errores |
 
 Las preguntas en blanco cuentan como errores, también para los límites por
-materia. La corrección se hace en el servidor; las soluciones no aparecen
+materia. Las preguntas anuladas (las cuatro casillas rojas), sin solución
+marcada o ausentes dentro de la numeración del PDF se excluyen y se indican
+expresamente en la web y en los logs de importación. No cuentan como aciertos,
+errores ni blancos, tampoco en los límites por materia. Se mantienen los
+mínimos de **32 aciertos PER y 15 ampliación**, aunque haya exclusiones.
+La corrección se hace en el servidor; las soluciones no aparecen
 en el HTML del examen antes de corregir. Es un modo de práctica sin
 temporizador (el examen PER oficial dura como máximo 90 minutos).
 Para carta de navegación se necesita la carta del Estrecho y el material
@@ -52,8 +57,13 @@ soluciones indicadas mediante **casillas de fondo rojo**, seguida de 45
 preguntas numeradas `1.-` y cuatro opciones `a)`–`d)`, ordenadas según UT1–11.
 Se conserva el texto bilingüe catalán/castellano y se extraen las imágenes
 incrustadas. Se validan orden, cantidad de preguntas, opciones y soluciones.
-Un PDF incompleto, escaneado, cifrado, con otra plantilla de soluciones o
-sin texto extraíble se rechaza con un mensaje; no se adivinan respuestas.
+Se admiten opciones fragmentadas en líneas, preguntas idénticas repetidas
+entre páginas y casillas rojas que tapan la letra (se identifica su columna).
+Una o cuatro casillas marcadas tienen significado definido; dos o tres se
+rechazan como ambiguas. Los huecos internos de numeración se señalan como
+preguntas ausentes y excluidas, sin inventar sus textos. Un PDF truncado al
+final, escaneado, cifrado, con otra plantilla de soluciones o sin texto
+extraíble se rechaza con un mensaje; no se adivinan respuestas.
 Otros diseños, figuras vectoriales o cambios de maquetación pueden requerir
 adaptar el importador. En administración se exige revisar el borrador antes de publicarlo.
 No se ejecuta OCR ni se envían documentos a servicios externos.
@@ -133,7 +143,10 @@ JavaScript, salvo el guardado local, el progreso y el botón de dejar en blanco.
 Cubren el PDF real, sus 45 soluciones y 9 ilustraciones, umbrales de aprobado,
 límites por materia, blancos, catálogo, administración, publicación,
 persistencia, duplicados, validación de formularios e importación automática
-de la carpeta inicial en bases de datos nuevas y existentes.
+de la carpeta inicial en bases de datos nuevas y existentes. También se
+verifican los nueve PDFs incluidos, exclusiones y la migración de SQLite:
+las bases existentes se actualizan automáticamente sin perder preguntas
+ni imágenes. No hay que borrar el volumen de Railway.
 
 ## Uso del material y dependencias
 

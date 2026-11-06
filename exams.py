@@ -34,9 +34,10 @@ class ImportProblem(ValueError):
 class Question:
     number: int
     text: str
-    correct: str
+    correct: str | None
     options: dict[str, str] = field(default_factory=dict)
     images: list[bytes] = field(default_factory=list)
+    excluded_reason: str = ""
 
 
 def subject_for(number: int) -> tuple[int, str]:
@@ -46,7 +47,7 @@ def subject_for(number: int) -> tuple[int, str]:
     raise ValueError(f"Número de pregunta fuera de rango: {number}")
 
 
-def extract_key(page: pymupdf.Page) -> dict[int, str]:
+def extract_key(page: pymupdf.Page) -> dict[int, tuple[str | None, str]]:
     words = page.get_text("words")
     red_cells = [
         drawing["rect"] for drawing in page.get_drawings()
@@ -55,31 +56,42 @@ def extract_key(page: pymupdf.Page) -> dict[int, str]:
         and drawing["fill"][1] < 0.35
         and drawing["fill"][2] < 0.35
     ]
-    answers: dict[int, str] = {}
-    for word in words:
-        letter = word[4].strip().lower()
-        if letter not in ("a", "b", "c", "d"):
-            continue
-        center = pymupdf.Point((word[0] + word[2]) / 2, (word[1] + word[3]) / 2)
-        if not any(center in rect for rect in red_cells):
-            continue
+    number_words = [
+        word for word in words if word[4].isdigit() and 1 <= int(word[4]) <= 45
+    ]
+    if {int(word[4]) for word in number_words} != set(range(1, 46)) or len(red_cells) < 30:
+        raise ImportProblem("La primera página no contiene una plantilla de 45 soluciones reconocible.")
+    marked: dict[int, set[str]] = {}
+    for rect in red_cells:
+        center = (rect.tl + rect.br) / 2
         numbers = [
-            item for item in words
-            if item[4].isdigit() and 1 <= int(item[4]) <= 45
-            and item[2] < word[0]
+            item for item in number_words
+            if item[2] < rect.x0
             and abs((item[1] + item[3]) / 2 - center.y) < 3
         ]
         if not numbers:
             raise ImportProblem("No se pudo asociar una solución roja a su pregunta.")
         number = int(max(numbers, key=lambda item: item[2])[4])
-        if number in answers:
-            raise ImportProblem(f"Hay varias soluciones marcadas para la pregunta {number}.")
-        answers[number] = letter
-    if set(answers) != set(range(1, 46)):
-        raise ImportProblem(
-            "La primera página debe contener las 45 soluciones, con una casilla "
-            "roja por pregunta, como en el PDF de ejemplo. No se ha importado el examen."
-        )
+        # Some marked cells cover the letter; other rows establish the column.
+        letters = {
+            word[4] for word in words
+            if word[4] in ("a", "b", "c", "d")
+            and abs((word[0] + word[2]) / 2 - center.x) < 2
+        }
+        if len(letters) != 1:
+            raise ImportProblem(f"No se pudo identificar la casilla roja de la pregunta {number}.")
+        marked.setdefault(number, set()).update(letters)
+    answers = {}
+    for number in range(1, 46):
+        letters = marked.get(number, set())
+        if len(letters) == 1:
+            answers[number] = (next(iter(letters)), "")
+        elif letters == set("abcd"):
+            answers[number] = (None, "Anulada en la plantilla: las cuatro respuestas están marcadas.")
+        elif not letters:
+            answers[number] = (None, "Sin solución marcada en el PDF original.")
+        else:
+            raise ImportProblem(f"Soluciones ambiguas para la pregunta {number}: no hay una ni cuatro casillas.")
     return answers
 
 
@@ -99,13 +111,24 @@ def parse_pdf(content: bytes) -> list[Question]:
         option: str | None = None
         for page in list(document)[1:]:
             events = []
+            lines = []
             for block in page.get_text("dict", flags=pymupdf.TEXTFLAGS_TEXT)["blocks"]:
                 if "lines" not in block:
                     continue
                 for line in block["lines"]:
                     text = "".join(span["text"] for span in line["spans"]).strip()
                     if text:
-                        events.append((line["bbox"][1], line["bbox"][0], text))
+                        lines.append((line["bbox"][1], line["bbox"][0], text))
+            rows = []
+            for y, x, text in sorted(lines):
+                if rows and abs(rows[-1][0] - y) < 2:
+                    rows[-1][1].append((x, text))
+                else:
+                    rows.append((y, [(x, text)]))
+            for y, fragments in rows:
+                events.append((y, min(x for x, _ in fragments), " ".join(
+                    text for _, text in sorted(fragments)
+                )))
             for info in page.get_image_info():
                 rect = pymupdf.Rect(info["bbox"]) & page.rect
                 if not rect.is_empty:
@@ -120,15 +143,16 @@ def parse_pdf(content: bytes) -> list[Question]:
                 text = event
                 if re.search(r"\bUT\s*\d+", text, re.I) or re.fullmatch(r"\(\d+\s*[-–]\s*\d+\)", text):
                     continue
-                if re.search(r"Examen teòric|Patrón/ona de Embarcaciones", text):
+                if re.search(r"Examen teòric|Patrón/ona de Embarcaci", text) or text in ("•", "x"):
                     continue
-                start = re.match(r"^(\d{1,2})\s*[.)]\s*[-–]?\s*(.*)", text)
+                start = re.match(r"^(\d{1,2})\s*(?:[.)]\s*[-–]?|[-–])\s*(.*)", text)
                 choice = re.match(r"^([a-dA-D])\s*[).]\s*(.*)", text)
                 if start:
                     number = int(start[1])
-                    if number != len(questions) + 1 or number not in answers:
+                    if number < (questions[-1].number if questions else 0) or number not in answers:
                         raise ImportProblem(f"Orden de preguntas inesperado: {number}. Revisa el formato.")
-                    current = Question(number, start[2], answers[number])
+                    correct, reason = answers[number]
+                    current = Question(number, start[2], correct, excluded_reason=reason)
                     questions.append(current)
                     option = None
                 elif choice and current is not None:
@@ -141,9 +165,32 @@ def parse_pdf(content: bytes) -> list[Question]:
                         current.options[option] += " " + text
                     else:
                         current.text += " " + text
-        if len(questions) != 45:
-            raise ImportProblem(f"Se han encontrado {len(questions)} preguntas; se necesitan 45.")
+        # Only internal gaps are identifiable as missing source questions.
+        # A missing final page must still fail, not create a truncated exam.
+        if not questions or questions[-1].number != 45:
+            raise ImportProblem(f"Se han encontrado {len(questions)} preguntas; falta el final del examen.")
+        unique = {}
         for question in questions:
+            if question.number in unique:
+                previous = unique[question.number]
+                if (
+                    " ".join(previous.text.split()) != " ".join(question.text.split())
+                    or previous.options != question.options or previous.images != question.images
+                ):
+                    raise ImportProblem(f"La pregunta {question.number} aparece repetida con contenido distinto.")
+            unique[question.number] = question
+        questions = list(unique.values())
+        present = set(unique)
+        for number in range(1, 46):
+            if number not in present:
+                questions.append(Question(
+                    number, "Pregunta ausente en el PDF original.", None,
+                    excluded_reason="El enunciado y las opciones no aparecen en el PDF original.",
+                ))
+        questions.sort(key=lambda question: question.number)
+        for question in questions:
+            if question.excluded_reason:
+                continue
             if not question.text or set(question.options) != set("abcd") or not all(question.options.values()):
                 raise ImportProblem(f"La pregunta {question.number} no tiene enunciado y cuatro opciones completas.")
         return questions
@@ -151,9 +198,11 @@ def parse_pdf(content: bytes) -> list[Question]:
 
 def grade(questions: list[dict], answers: dict[str, str], mode: str) -> dict:
     rules = MODES[mode]
-    selected = [q for q in questions if q["number"] >= rules["first"]]
-    if len(selected) != rules["total"]:
+    in_mode = [q for q in questions if q["number"] >= rules["first"]]
+    if len(in_mode) != rules["total"]:
         raise ValueError("El examen no tiene el número de preguntas requerido.")
+    excluded = [q for q in in_mode if q.get("excluded_reason")]
+    selected = [q for q in in_mode if not q.get("excluded_reason")]
     rows = []
     units = {}
     for question in selected:
@@ -181,5 +230,6 @@ def grade(questions: list[dict], answers: dict[str, str], mode: str) -> dict:
     return {
         "passed": not failures, "score": score, "total": len(rows),
         "blank": sum(not row["answer"] for row in rows),
+        "excluded": excluded,
         "failures": failures, "units": list(units.values()), "questions": rows,
     }
